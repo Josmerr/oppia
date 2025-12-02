@@ -731,6 +731,13 @@ class PlayExplorationAsLoggedInUserTests(test_utils.GenericTestBase):
             )
         self.logout()
 
+    def test_guest_user_cannot_access_private_exploration(self) -> None:
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_play_exploration/%s' % self.private_exp_id,
+                expected_status_int=401,
+            )
+
     def test_invalid_exploration_id_raises_error(self) -> None:
         self.login(self.user_email)
         with self.swap(self, 'testapp', self.mock_testapp):
@@ -4073,6 +4080,22 @@ class DecoratorForAcceptingSuggestionTests(test_utils.GenericTestBase):
         self.assertEqual(response['target_id'], self.EXPLORATION_ID)
         self.logout()
 
+    def test_user_without_review_rights_cannot_accept_translation_suggestion(
+        self,
+    ) -> None:
+        self.login(self.VIEWER_EMAIL)
+        testapp_swap = self.swap(self, 'testapp', self.mock_testapp)
+        translation_review_swap = self.swap_to_always_return(
+            user_services, 'can_review_translation_suggestions', value=False
+        )
+        with testapp_swap, translation_review_swap:
+            self.get_json(
+                '/mock_accept_suggestion/%s/%s'
+                % (self.EXPLORATION_ID, self.suggestion_id_2),
+                expected_status_int=200,
+            )
+        self.logout()
+
     def test_user_with_review_rights_can_accept_question_suggestion(
         self,
     ) -> None:
@@ -4088,6 +4111,21 @@ class DecoratorForAcceptingSuggestionTests(test_utils.GenericTestBase):
             )
         self.assertEqual(response['suggestion_id'], self.suggestion_id_3)
         self.assertEqual(response['target_id'], self.EXPLORATION_ID)
+        self.logout()
+
+    def test_user_with_review_rights_cannot_accept_question_suggestion(
+        self,
+    ) -> None:
+        self.login(self.VIEWER_EMAIL)
+        testapp_swap = self.swap(self, 'testapp', self.mock_testapp)
+        question_review_swap = self.swap_to_always_return(
+            user_services, 'can_review_question_suggestions', value=False
+        )
+        with testapp_swap, question_review_swap:
+            self.get_json(
+                '/mock_accept_suggestion/%s/%s'
+                % (self.EXPLORATION_ID, self.suggestion_id_3)
+            )
         self.logout()
 
     def test_curriculum_admin_can_accept_suggestions(self) -> None:
@@ -5446,6 +5484,16 @@ class StoryViewerAsLoggedInUserTests(test_utils.GenericTestBase):
                 expected_status_int=404,
             )
 
+    def test_guest_cannot_access_story_viewer_page_as_logged_in_user(
+        self,
+    ) -> None:
+        self.logout()
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_story_data/staging/topic/%s' % self.story_url_fragment,
+                expected_status_int=401,
+            )
+
     def test_user_cannot_access_story_when_topic_is_not_published(self) -> None:
         with self.swap(self, 'testapp', self.mock_testapp):
             self.get_json(
@@ -5556,6 +5604,35 @@ class StoryViewerAsLoggedInUserTests(test_utils.GenericTestBase):
                 response.headers['location'],
             )
 
+    def test_story_with_empty_topic_id_raises_exception(self) -> None:
+        self.save_new_story(
+            # Topic id can't be None, only a string.
+            story_services.get_new_story_id(),
+            self.admin_id,
+            '',
+            url_fragment='story-no-topic-id',
+        )
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_story_data/staging/topic/story-no-topic-id',
+                expected_status_int=404,
+            )
+
+    def test_story_not_referenced_in_topic_raises_exception(self) -> None:
+        topic_services.publish_topic(self.topic_id, self.admin_id)
+        # This story is not added or referenced in the topic.
+        self.save_new_story(
+            story_services.get_new_story_id(),
+            self.admin_id,
+            self.topic_id,
+            url_fragment='unreferenced-story-frag',
+        )
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_story_data/staging/topic/unreferenced-story-frag',
+                expected_status_int=404,
+            )
+
 
 class StoryViewerTests(test_utils.GenericTestBase):
     """Tests for decorator can_access_story_viewer_page."""
@@ -5652,6 +5729,35 @@ class StoryViewerTests(test_utils.GenericTestBase):
         with self.swap(self, 'testapp', self.mock_testapp):
             self.get_json(
                 '/mock_story_data/staging/topic/%s' % self.story_url_fragment,
+                expected_status_int=404,
+            )
+
+    def test_story_with_no_topic_id_raises_exception(self) -> None:
+        self.save_new_story(
+            # Story id can't be None, only a string.
+            story_services.get_new_story_id(),
+            self.admin_id,
+            '',
+            url_fragment='story-no-topic-id',
+        )
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_story_data/staging/topic/%s' % 'story-no-topic-id',
+                expected_status_int=404,
+            )
+
+    def test_story_not_referenced_in_topic_raises_exception(self) -> None:
+        topic_services.publish_topic(self.topic_id, self.admin_id)
+        # This story is not added or referenced in the topic.
+        self.save_new_story(
+            story_services.get_new_story_id(),
+            self.admin_id,
+            self.topic_id,
+            url_fragment='unreferenced-story-frag',
+        )
+        with self.swap(self, 'testapp', self.mock_testapp):
+            self.get_json(
+                '/mock_story_data/staging/topic/unreferenced-story-frag',
                 expected_status_int=404,
             )
 
@@ -7935,6 +8041,21 @@ class DecoratorForUpdatingSuggestionTests(test_utils.GenericTestBase):
         self.assertEqual(response['suggestion_id'], self.question_suggestion_id)
         self.logout()
 
+    def test_user_without_review_rights_cannot_update_question_suggestion(
+        self,
+    ) -> None:
+        self.login(self.en_language_reviewer)
+        testapp_swap = self.swap(self, 'testapp', self.mock_testapp)
+        question_update_swap = self.swap_to_always_return(
+            user_services, 'can_review_translation_suggestions', value=False
+        )
+        with testapp_swap, question_update_swap:
+            self.get_json(
+                '/mock/%s' % self.question_suggestion_id,
+                expected_status_int=401,
+            )
+            self.logout()
+
     def test_guest_cannot_update_any_suggestion(self) -> None:
         with self.swap(self, 'testapp', self.mock_testapp):
             response = self.get_json(
@@ -7993,6 +8114,180 @@ class DecoratorForUpdatingSuggestionTests(test_utils.GenericTestBase):
             )
         self.assertEqual(response['error'], 'Invalid suggestion type.')
         self.logout()
+
+
+class CanFetchContributorDashboardStatsTests(test_utils.GenericTestBase):
+    """Tests for can_fetch_contributor_dashboard_stats decorator."""
+
+    username = 'user'
+    user_email = 'user@example.com'
+    user_a = 'A'
+    user_a_email = 'a@example.com'
+
+    class MockHandler(base.BaseHandler[Dict[str, str], Dict[str, str]]):
+        GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+        URL_PATH_ARGS_SCHEMAS = {
+            'username': {'schema': {'type': 'basestring'}},
+            'contribution_type': {'schema': {'type': 'basestring'}},
+            'contribution_subtype': {'schema': {'type': 'basestring'}},
+        }
+        HANDLER_ARGS_SCHEMAS: Dict[str, Dict[str, str]] = {'GET': {}}
+
+        @acl_decorators.can_fetch_contributor_dashboard_stats
+        def get(
+            self,
+            contribution_type: str,
+            contribution_subtype: str,
+            username: str,
+        ) -> None:
+            self.render_json(
+                {
+                    'contribution_type': contribution_type,
+                    'contribution_subtype': contribution_subtype,
+                    'username': username,
+                }
+            )
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.signup(self.user_email, self.username)
+
+        self.mock_testapp = webtest.TestApp(
+            webapp2.WSGIApplication(
+                [
+                    webapp2.Route(
+                        '/mock_can_fetch_contributor_dashboard_stats/'
+                        '<contribution_type>/<contribution_subtype>/<username>',
+                        self.MockHandler,
+                    )
+                ],
+                debug=feconf.DEBUG,
+            )
+        )
+
+    def test_user_fetching_own_stats_succeeds(self) -> None:
+        self.login(self.user_email)
+        with self.swap(self, 'testapp', self.mock_testapp):
+            response = self.get_json(
+                '/mock_can_fetch_contributor_dashboard_stats/%s/%s/%s'
+                % (
+                    feconf.CONTRIBUTION_TYPE_TRANSLATION,
+                    feconf.CONTRIBUTION_SUBTYPE_REVIEW,
+                    self.username,
+                )
+            )
+
+            self.assertEqual(
+                response,
+                {
+                    'contribution_type': feconf.CONTRIBUTION_TYPE_TRANSLATION,
+                    'contribution_subtype': feconf.CONTRIBUTION_SUBTYPE_REVIEW,
+                    'username': self.username,
+                },
+            )
+            self.logout()
+
+    def test_user_fetching_other_user_stats_raises_exception(self) -> None:
+        self.login(self.user_email)
+        with self.swap(self, 'testapp', self.mock_testapp):
+            response = self.get_json(
+                '/mock_can_fetch_contributor_dashboard_stats/%s/%s/%s'
+                % (
+                    feconf.CONTRIBUTION_TYPE_TRANSLATION,
+                    feconf.CONTRIBUTION_SUBTYPE_REVIEW,
+                    self.user_a,
+                ),
+                expected_status_int=401,
+            )
+
+        self.assertEqual(
+            response['error'],
+            'The user user is not allowed to fetch the stats of other users.',
+        )
+        self.logout()
+
+    def test_user_not_logged_in_raises_exception(self) -> None:
+        with self.swap(self, 'testapp', self.mock_testapp):
+            response = self.get_json(
+                '/mock_can_fetch_contributor_dashboard_stats/%s/%s/%s'
+                % (
+                    feconf.CONTRIBUTION_TYPE_TRANSLATION,
+                    feconf.CONTRIBUTION_SUBTYPE_REVIEW,
+                    self.username,
+                ),
+                expected_status_int=401,
+            )
+
+        self.assertEqual(
+            response['error'], 'You must be logged in to access this resource.'
+        )
+
+
+class CanFetchAllContributorDashboardStatsTests(test_utils.GenericTestBase):
+    """Test for can_fetch_all_contributor_dashboard_stats decorator"""
+
+    username = 'user'
+    user_email = 'user@example.com'
+    user_a = 'A'
+    user_a_email = 'a@example.com'
+
+    class MockHandler(base.BaseHandler[Dict[str, str], Dict[str, str]]):
+        GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+        URL_PATH_ARGS_SCHEMAS = {'username': {'schema': {'type': 'basestring'}}}
+        HANDLER_ARGS_SCHEMAS: Dict[str, Dict[str, str]] = {'GET': {}}
+
+        @acl_decorators.can_fetch_all_contributor_dashboard_stats
+        def get(self, username: str) -> None:
+            self.render_json({'username': username})
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.signup(self.user_email, self.username)
+
+        self.mock_testapp = webtest.TestApp(
+            webapp2.WSGIApplication(
+                [
+                    webapp2.Route(
+                        '/mock_can_fetch_contributor_all_stats_summaries/<username>',
+                        self.MockHandler,
+                    )
+                ],
+                debug=feconf.DEBUG,
+            )
+        )
+
+    def test_user_can_fetch_all_contributor_stats(self) -> None:
+        self.login(self.user_email)
+        response = self.mock_testapp.get(
+            '/mock_can_fetch_contributor_all_stats_summaries/%s' % self.username
+        )
+        self.assertEqual(response.status_int, 200)
+        self.logout()
+
+    def test_user_fetching_other_user_stats_raises_exception(self) -> None:
+        self.login(self.user_email)
+        with self.swap(self, 'testapp', self.mock_testapp):
+            response = self.get_json(
+                '/mock_can_fetch_contributor_all_stats_summaries/%s'
+                % self.user_a,
+                expected_status_int=401,
+            )
+        self.assertEqual(
+            response['error'],
+            'The user user is not allowed to fetch the stats of other users.',
+        )
+        self.logout()
+
+    def test_guest_user_cannot_fetch_contributor_stats(self) -> None:
+        with self.swap(self, 'testapp', self.mock_testapp):
+            response = self.get_json(
+                '/mock_can_fetch_contributor_all_stats_summaries/%s'
+                % self.username,
+                expected_status_int=401,
+            )
+        self.assertEqual(
+            response['error'], 'You must be logged in to access this resource.'
+        )
 
 
 class OppiaAndroidDecoratorTest(test_utils.GenericTestBase):
